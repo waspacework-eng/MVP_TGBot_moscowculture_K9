@@ -11,6 +11,9 @@
 Попробовать бота:
 [@wakeupmsk_bot](https://t.me/wakeupmsk_bot)
 
+Презентация: 
+[Google Drive](https://drive.google.com/file/d/1UZUK93rsW1o1G54jQILjzycgPrHQalgZ/view?usp=drive_link)
+
 
 ## Содержание
 
