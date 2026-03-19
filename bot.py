@@ -57,7 +57,22 @@ def get_user(uid: int) -> dict:
         user_data[uid] = {"name": "", "tags": set(), "history": [], "seen": set()}
     return user_data[uid]
 
+def is_event_upcoming(event: dict) -> bool:
+    """
+    Возвращает True если событие ещё не началось (с учётом текущего времени).
+    Событие сегодня в 10:00 в 23:00 — уже прошло, не показываем.
+    """
+    try:
+        now = datetime.now()
+        event_dt = datetime.strptime(
+            f"{event['date']} {event.get('time', '23:59')}", "%Y-%m-%d %H:%M"
+        )
+        return event_dt > now
+    except Exception:
+        return True  # если не можем распарсить — не скрываем
+
 def filter_events(tags, date_from, date_to, exclude_seen=None):
+    now = datetime.now()
     result = []
     for i, event in enumerate(EVENTS):
         if exclude_seen and i in exclude_seen:
@@ -65,6 +80,9 @@ def filter_events(tags, date_from, date_to, exclude_seen=None):
         if not (date_from <= event["date"] <= date_to):
             continue
         if tags and not tags.intersection(set(event["tags"])):
+            continue
+        # Скрываем события которые уже прошли (дата+время < сейчас)
+        if not is_event_upcoming(event):
             continue
         result.append((i, event))
     result.sort(key=lambda x: x[1]["date"])
@@ -160,6 +178,10 @@ async def llm_free_search(uid: int, user_query: str) -> str:
     name_str = f"Имя пользователя: {u['name']}. " if u["name"] else ""
 
     # ── Шаг 1: ИИ только парсит запрос, никаких событий не видит ─────────────
+    # Уже здесь исключаем прошедшие события из контекста пользователя
+    stale = {i for i in u["seen"] if not is_event_upcoming(EVENTS[i]) if 0 <= i < len(EVENTS)}
+    u["seen"].update(stale)  # помечаем прошедшие как "виденные" чтобы не показывать
+
     parse_prompt = (
         f"Сегодня {today_str}. Пользователь написал запрос о событиях в Москве.\n"
         "Извлеки параметры поиска и верни ТОЛЬКО JSON без обёртки:\n"
@@ -221,6 +243,9 @@ async def llm_free_search(uid: int, user_query: str) -> str:
     candidates = []
     for i, event in enumerate(EVENTS):
         if i in u["seen"]:
+            continue
+        # Скрываем события которые уже прошли (дата+время < сейчас)
+        if not is_event_upcoming(event):
             continue
         # Фильтр по дате
         if not (date_from <= event["date"] <= date_to):
@@ -328,21 +353,30 @@ async def llm_free_search(uid: int, user_query: str) -> str:
 
 async def llm_surprise(uid: int) -> str:
     u = get_user(uid)
-    available = [(i, e) for i, e in enumerate(EVENTS) if i not in u["seen"]]
+    # Только предстоящие события, которые ещё не показывали
+    available = [
+        (i, e) for i, e in enumerate(EVENTS)
+        if i not in u["seen"] and is_event_upcoming(e)
+    ]
     if not available:
+        # Если всё показано — сбрасываем seen, но всё равно только будущие
         u["seen"].clear()
-        available = list(enumerate(EVENTS))
+        available = [(i, e) for i, e in enumerate(EVENTS) if is_event_upcoming(e)]
+    if not available:
+        return "😔 Похоже, ближайших событий в базе нет. Загляни позже!"
     if not OPENAI_KEY:
         pick = random.choice(available)
         u["seen"].add(pick[0])
         return render_cards([pick], ["Просто попробуй — может понравится!"], "Вот случайное событие 🎲")
     client = AsyncOpenAI(api_key=OPENAI_KEY)
-    today = datetime.today().strftime("%Y-%m-%d")
+    now = datetime.now()
+    now_str = now.strftime("%Y-%m-%d %H:%M")
     events_json = json.dumps([{"index": i, **e} for i, e in available], ensure_ascii=False)
     prompt = (
-        f"Сегодня {today}. Выбери 1-2 самых неожиданных, нестандартных события.\n"
+        f"Сейчас {now_str}. ВСЕ события в списке уже проверены — они ещё не начались.\n"
+        f"Выбери 1-2 самых неожиданных, нестандартных события.\n"
         f"Не самые очевидные — то о чём человек не подумал бы сам, но был бы рад.\n\n"
-        f"База:\n{events_json}\n\n"
+        f"База (только предстоящие события):\n{events_json}\n\n"
         f"Верни ТОЛЬКО JSON:\n"
         f'{{"events":[индексы из поля index, 1-2 штуки],"intro":"1-2 предложения с интригой","hooks":["почему именно это стоит попробовать"]}}'
     )
