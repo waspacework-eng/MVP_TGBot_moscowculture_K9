@@ -1,4 +1,8 @@
-aiogram>=3.0
 openai>=1.50
-python-dotenv>=1.0.0
+aiogram>=3.0
+python-dotenv
+pandas
+scikit-learn
+pypdf
+openpyxl
 tzdata
