@@ -14,7 +14,6 @@ Telegram-бот «Разбуди будни» v1.0 (MVP)
 
 import html
 import json
-from pathlib import Path
 import logging
 import os
 import random
@@ -36,11 +35,8 @@ load_dotenv()
 BOT_TOKEN   = os.getenv("BOT_TOKEN")
 OPENAI_KEY  = os.getenv("OPENAI_API_KEY")
 MODEL       = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")   # FIX: модель в настройке, не в коде
-BASE_DIR      = Path(__file__).resolve().parent      # FIX: пути строим от папки с bot.py
-EVENTS_FILE   = BASE_DIR / "events.json"
+EVENTS_FILE   = "events.json"
 WELCOME_IMAGE = "welcome.PNG"
-FIND_IMAGE    = "find.PNG"
-RESEARCH_IMAGE = "research.PNG"
 
 MSK = ZoneInfo("Europe/Moscow")
 
@@ -60,18 +56,6 @@ def ymd(d: datetime) -> str:
 def esc(s) -> str:
     """FIX: экранирование для parse_mode=HTML (названия вроде «A & B» ломали разметку)."""
     return html.escape(str(s if s is not None else ""), quote=False)
-
-
-async def send_image(message: Message, filename: str):
-    """FIX: отправка картинки с записью причины ошибки в лог (раньше ошибка глоталась молча)."""
-    path = BASE_DIR / filename
-    if not path.exists():
-        log.warning(f"Картинка не найдена: {path} (файлы в папке: {[p.name for p in BASE_DIR.iterdir()][:30]})")
-        return
-    try:
-        await message.answer_photo(FSInputFile(path))
-    except Exception as e:
-        log.warning(f"Не удалось отправить {filename} ({path.stat().st_size} байт): {e}")
 
 
 def load_events():
@@ -538,7 +522,10 @@ async def cmd_start(message: Message, state: FSMContext):
     uid = message.from_user.id
     u = get_user(uid)
     u["tags"] = set(); u["history"] = []; u["seen"] = set()
-    await send_image(message, WELCOME_IMAGE)
+    try:
+        await message.answer_photo(FSInputFile(WELCOME_IMAGE))
+    except Exception:
+        pass
     if u["name"]:
         await message.answer(
             f"С возвращением, {esc(u['name'])}! 👋\n\nКак будем искать?",
