@@ -14,6 +14,7 @@ Telegram-бот «Разбуди будни» v1.0 (MVP)
 
 import html
 import json
+from pathlib import Path
 import logging
 import os
 import random
@@ -35,8 +36,11 @@ load_dotenv()
 BOT_TOKEN   = os.getenv("BOT_TOKEN")
 OPENAI_KEY  = os.getenv("OPENAI_API_KEY")
 MODEL       = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")   # FIX: модель в настройке, не в коде
-EVENTS_FILE   = "events.json"
-WELCOME_IMAGE = "welcome.PNG"
+BASE_DIR      = Path(__file__).resolve().parent      # FIX: пути строим от папки с bot.py
+EVENTS_FILE   = BASE_DIR / "events.json"
+WELCOME_IMAGE = "welcome.png"
+FIND_IMAGE    = "find.png"
+RESEARCH_IMAGE = "research.png"
 
 MSK = ZoneInfo("Europe/Moscow")
 
@@ -56,6 +60,29 @@ def ymd(d: datetime) -> str:
 def esc(s) -> str:
     """FIX: экранирование для parse_mode=HTML (названия вроде «A & B» ломали разметку)."""
     return html.escape(str(s if s is not None else ""), quote=False)
+
+
+def find_file(filename: str):
+    """FIX: ищем файл без учёта регистра (welcome.png == welcome.PNG): на Linux регистр важен."""
+    exact = BASE_DIR / filename
+    if exact.exists():
+        return exact
+    for p in BASE_DIR.iterdir():
+        if p.name.lower() == filename.lower():
+            return p
+    return None
+
+
+async def send_image(message: Message, filename: str):
+    """Отправка картинки; причина ошибки пишется в лог (раньше глоталась молча)."""
+    path = find_file(filename)
+    if path is None:
+        log.warning(f"Картинка не найдена: {filename} (файлы в папке: {sorted(p.name for p in BASE_DIR.iterdir())[:40]})")
+        return
+    try:
+        await message.answer_photo(FSInputFile(path))
+    except Exception as e:
+        log.warning(f"Не удалось отправить {path.name} ({path.stat().st_size} байт): {e}")
 
 
 def load_events():
@@ -485,8 +512,8 @@ def date_keyboard():
     b.button(text="Сегодня",            callback_data="date:today")
     b.button(text="Завтра",             callback_data="date:tomorrow")
     b.button(text="Эта неделя",         callback_data="date:week")
-    b.button(text="Следующие 2 нед",    callback_data="date:2weeks")
-    b.button(text="Ближайший месяц",    callback_data="date:month")   # FIX: вместо «Весь апрель»
+    b.button(text="2 недели",           callback_data="date:2weeks")
+    b.button(text="Месяц",              callback_data="date:month")   # FIX: вместо «Весь апрель»
     b.button(text="Любая дата",         callback_data="date:any")
     b.adjust(2)
     return b
@@ -522,10 +549,7 @@ async def cmd_start(message: Message, state: FSMContext):
     uid = message.from_user.id
     u = get_user(uid)
     u["tags"] = set(); u["history"] = []; u["seen"] = set()
-    try:
-        await message.answer_photo(FSInputFile(WELCOME_IMAGE))
-    except Exception:
-        pass
+    await send_image(message, WELCOME_IMAGE)
     if u["name"]:
         await message.answer(
             f"С возвращением, {esc(u['name'])}! 👋\n\nКак будем искать?",
