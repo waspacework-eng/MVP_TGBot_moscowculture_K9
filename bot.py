@@ -85,6 +85,17 @@ async def send_image(message: Message, filename: str):
         log.warning(f"Не удалось отправить {path.name} ({path.stat().st_size} байт): {e}")
 
 
+async def replace_with_image_screen(callback: CallbackQuery, image: str, text: str, **kwargs):
+    """Картинка + новое сообщение с экраном; старое меню удаляем, чтобы не копились кнопки."""
+    chat_msg = callback.message
+    try:
+        await chat_msg.delete()
+    except Exception:
+        pass
+    await send_image(chat_msg, image)
+    await chat_msg.answer(text, **kwargs)
+
+
 def load_events():
     with open(EVENTS_FILE, encoding="utf-8") as f:
         return json.load(f)
@@ -578,10 +589,13 @@ async def handle_name(message: Message, state: FSMContext):
 @dp.callback_query(F.data == "mode_tags")
 async def mode_tags(callback: CallbackQuery, state: FSMContext):
     get_user(callback.from_user.id)["tags"] = set()
-    await callback.message.edit_text("Выбери темы, которые тебя интересуют:",
-                                      reply_markup=tags_keyboard(set()).as_markup())
     await state.set_state(Form.choosing_tags)
     await callback.answer()
+    await replace_with_image_screen(
+        callback, FIND_IMAGE,
+        "Выбери темы, которые тебя интересуют:",
+        reply_markup=tags_keyboard(set()).as_markup(),
+    )
 
 
 @dp.callback_query(F.data == "mode_ask")
@@ -589,14 +603,15 @@ async def mode_ask_callback(callback: CallbackQuery, state: FSMContext):
     await state.set_state(Form.free_query)
     u = get_user(callback.from_user.id)
     note = "\n\n💡 <i>Помню наш разговор — можешь уточнять прямо в диалоге.</i>" if u["history"] else ""
-    await callback.message.edit_text(
+    await callback.answer()
+    await replace_with_image_screen(
+        callback, RESEARCH_IMAGE,
         "🗣 <b>Режим живого поиска</b>\n\nНапиши что ищешь своими словами:\n\n"
         "• <i>«хочу что-нибудь бесплатное на выходных»</i>\n"
         "• <i>«ищу тусовку для стартаперов»</i>\n"
         "• <i>«а подешевле что-нибудь есть?»</i>" + note,
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
-    await callback.answer()
 
 
 @dp.callback_query(F.data == "go_ask")
@@ -640,6 +655,7 @@ async def go_home(callback: CallbackQuery, state: FSMContext):
 @dp.message(Command("ask"))
 async def cmd_ask(message: Message, state: FSMContext):
     await state.set_state(Form.free_query)
+    await send_image(message, RESEARCH_IMAGE)
     await message.answer(
         "🗣 <b>Режим живого поиска</b>\n\nНапиши что ищешь — я разберусь!\n"
         "Можно уточнять: «а подешевле?», «покажи ещё».", parse_mode="HTML"
