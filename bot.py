@@ -182,6 +182,19 @@ def strip_json(raw: str) -> str:
     return raw.strip()
 
 
+def align_hooks(raw_hooks, keys):
+    """
+    FIX: подписи привязываются к событиям по номеру, а не по порядку в списке
+    (модель иногда сдвигала порядок, и подпись попадала не под своё событие).
+    raw_hooks: [{"n": <ключ события>, "text": "..."}]; keys — ключи показанных событий по порядку.
+    """
+    by_key = {}
+    for h in raw_hooks or []:
+        if isinstance(h, dict) and "n" in h:
+            by_key[str(h["n"])] = str(h.get("text", ""))
+    return [by_key.get(str(k), "") for k in keys]
+
+
 async def llm_call(client: AsyncOpenAI, messages: list, max_tokens: int, temperature=None) -> str:
     """
     FIX: единая обёртка вызова модели.
@@ -214,13 +227,14 @@ async def llm_recommend(indexed_events, selected_tags):
         f"Пользователь интересуется: {tags_text}.\n"
         f"События ({len(indexed_events)} шт):\n{events_data}\n\n"
         f"Верни ТОЛЬКО JSON без обёртки:\n"
-        f'{{"intro": "1-2 живых предложения — совет другу","hooks": ["крючок 1","крючок 2"]}}\n'
-        f"hooks — ровно {len(indexed_events)} штук."
+        f'{{"intro": "1-2 живых предложения — совет другу","hooks": [{{"n": 1, "text": "про событие №1"}}, {{"n": 2, "text": "про событие №2"}}]}}\n'
+        f"hooks — ровно {len(indexed_events)} штук; n — номер события из списка, text — только про это событие."
     )
     try:
         raw = await llm_call(client, [{"role": "user", "content": prompt}], 1500, 0.75)
         ai = json.loads(strip_json(raw))
-        return render_cards(indexed_events, ai.get("hooks", []), ai.get("intro", ""))
+        hooks = align_hooks(ai.get("hooks", []), range(1, len(indexed_events) + 1))
+        return render_cards(indexed_events, hooks, ai.get("intro", ""))
     except Exception as e:
         log.warning(f"llm_recommend error: {e}")
         return format_events_plain(indexed_events)
@@ -369,8 +383,8 @@ async def llm_free_search(uid: int, user_query: str) -> str:
         f"Найдено {len(found)} подходящих событий:\n{events_for_ai}\n\n"
         "Верни ТОЛЬКО JSON без обёртки:\n"
         '{"intro": "1-2 живых предложения — совет другу под этот конкретный запрос",'
-        '"hooks": ["почему событие подходит (1 предложение)", ...]}'
-        f"\nhooks — ровно {len(found)} штук."
+        '"hooks": [{"n": 1, "text": "почему событие №1 подходит (1 предложение)"}, ...]}'
+        f"\nhooks — ровно {len(found)} штук; n — номер события из списка, text — только про это событие."
     )
     try:
         raw = await llm_call(client, [{"role": "user", "content": text_prompt}], 1500, 0.75)
@@ -379,7 +393,8 @@ async def llm_free_search(uid: int, user_query: str) -> str:
             "role": "assistant",
             "content": f"Показал: {[e['title'] for _, e in found]}"
         })
-        return render_cards(found, ai.get("hooks", []), ai.get("intro", ""), understood)
+        hooks = align_hooks(ai.get("hooks", []), range(1, len(found) + 1))
+        return render_cards(found, hooks, ai.get("intro", ""), understood)
     except Exception as e:
         log.warning(f"llm text error: {e}")
         return render_cards(found, [], "", understood)
@@ -412,7 +427,7 @@ async def llm_surprise(uid: int) -> str:
         f"Не самые очевидные — то о чём человек не подумал бы сам, но был бы рад.\n\n"
         f"База (только предстоящие события):\n{events_json}\n\n"
         f"Верни ТОЛЬКО JSON:\n"
-        f'{{"events":[индексы из поля index, 1-2 штуки],"intro":"1-2 предложения с интригой","hooks":["почему именно это стоит попробовать"]}}'
+        f'{{"events":[индексы из поля index, 1-2 штуки],"intro":"1-2 предложения с интригой","hooks":[{{"n": индекс из поля index, "text": "почему именно это стоит попробовать"}}]}}'
     )
     try:
         raw = await llm_call(client, [{"role": "user", "content": prompt}], 1500, 1.0)
@@ -423,7 +438,8 @@ async def llm_surprise(uid: int) -> str:
         if not found:
             found = [sample[0]]
         u["seen"].update(i for i, _ in found)
-        return render_cards(found, ai.get("hooks", []), ai.get("intro", ""), "Выбрал специально для тебя 🎲")
+        hooks = align_hooks(ai.get("hooks", []), [i for i, _ in found])
+        return render_cards(found, hooks, ai.get("intro", ""), "Выбрал специально для тебя 🎲")
     except Exception as e:
         log.warning(f"llm_surprise error: {e}")
         pick = random.choice(available)
